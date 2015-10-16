@@ -16,13 +16,45 @@ class RiderRequestViewController: UIViewController, CLLocationManagerDelegate, M
     @IBOutlet weak var pickupRider: UIButton!
     @IBOutlet weak var spinner: UIActivityIndicatorView!
     
+    let locationManager = CLLocationManager()
     var requestLocation: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 0.0, longitude: 0.0)
     var requestUsername: String = ""
     
     override func viewDidLoad() {
         super.viewDidLoad()
         self.mapView.delegate = self
+        self.locationManager.delegate = self
         self.configureMap()
+        let status = CLLocationManager.authorizationStatus()
+        if #available(iOS 8.0, *) {
+            if CLLocationManager.locationServicesEnabled() && (status == CLAuthorizationStatus.AuthorizedAlways || status == CLAuthorizationStatus.AuthorizedWhenInUse) && status != .NotDetermined {
+                locationManager.delegate = self
+                locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+                locationManager.requestAlwaysAuthorization()
+                locationManager.startUpdatingLocation()
+            } else {
+                let alertController = UIAlertController(title: "Location Services Disabled", message: "Location Services have been disabled. uberClone will be unbale to determine your location for pickup.", preferredStyle: UIAlertControllerStyle.Alert)
+                
+                alertController.addAction(UIAlertAction(title: "Cancel", style: .Cancel){ (actions: UIAlertAction) in
+                    alertController.dismissViewControllerAnimated(true) {
+                        dispatch_async(dispatch_get_main_queue()) {
+                            self.dismissViewControllerAnimated(true, completion: nil)
+                        }
+                    }
+                    })
+                alertController.addAction(UIAlertAction(title: "Open Settings", style: UIAlertActionStyle.Default){ (action: UIAlertAction) in
+                    if let url = NSURL(string: UIApplicationOpenSettingsURLString) {
+                        UIApplication.sharedApplication().openURL(url)
+                    }
+                    })
+                dispatch_async(dispatch_get_main_queue()) {
+                    self.presentViewController(alertController, animated: true, completion: nil)
+                }
+            }
+        } else {
+            // Fallback on earlier versions
+        }
+
     }
 
     override func didReceiveMemoryWarning() {
@@ -45,7 +77,21 @@ class RiderRequestViewController: UIViewController, CLLocationManagerDelegate, M
                                     try object!.save()
                                 } catch let error {
                                     print("SAVE ERROR \(error)")
-                                    
+                                }
+                                CLGeocoder().reverseGeocodeLocation(CLLocation(latitude: self.requestLocation.latitude, longitude: self.requestLocation.longitude)) { (placemarks: [CLPlacemark]?, error: NSError?) -> Void in
+                                    if (error != nil) {
+                                        print(error?.localizedDescription)
+                                    } else {
+                                        if placemarks?.count > 0 {
+                                            // Allow Apple Maps to provider directions
+                                            let mapItem = MKMapItem(placemark: MKPlacemark(placemark: (placemarks?.first)!))
+                                            mapItem.name = self.requestUsername
+                                            let launchOptions = [MKLaunchOptionsDirectionsModeKey   : MKLaunchOptionsDirectionsModeDriving]
+                                            mapItem.openInMapsWithLaunchOptions(launchOptions)
+                                        } else {
+                                            print("No Placemarks")
+                                        }
+                                    }
                                 }
                             } else {
                                 print("FIND BY ID \(error)")
@@ -83,6 +129,17 @@ class RiderRequestViewController: UIViewController, CLLocationManagerDelegate, M
         objectAnnotation.subtitle = "Is requesting a ride."
         self.mapView.addAnnotation(objectAnnotation)
     }
+    
+    // MARK: - CLLocationManager
+    
+    func locationManager(manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        
+    }
+    
+    func locationManager(manager: CLLocationManager, didFailWithError error: NSError) {
+        
+    }
+    
     
     /*
     // MARK: - Navigation

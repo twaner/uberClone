@@ -36,6 +36,38 @@ class RiderViewController: UIViewController, CLLocationManagerDelegate, MKMapVie
         } else {
             // Fallback on earlier versions
         }
+        
+        let status = CLLocationManager.authorizationStatus()
+        if #available(iOS 8.0, *) {
+            if CLLocationManager.locationServicesEnabled() && (status == CLAuthorizationStatus.AuthorizedAlways || status == CLAuthorizationStatus.AuthorizedWhenInUse) && status != .NotDetermined {
+                locationManager.delegate = self
+                locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+                locationManager.requestAlwaysAuthorization()
+                locationManager.startUpdatingLocation()
+            } else {
+                let alertController = UIAlertController(title: "Location Services Disabled", message: "Location Services have been disabled. uberClone will be unbale to determine your location for pickup.", preferredStyle: UIAlertControllerStyle.Alert)
+                
+                alertController.addAction(UIAlertAction(title: "Cancel", style: .Cancel){ (actions: UIAlertAction) in
+                    alertController.dismissViewControllerAnimated(true) {
+                        dispatch_async(dispatch_get_main_queue()) {
+                            self.dismissViewControllerAnimated(true, completion: nil)
+                        }
+                    }
+                    })
+                alertController.addAction(UIAlertAction(title: "Open Settings", style: UIAlertActionStyle.Default){ (action: UIAlertAction) in
+                    if let url = NSURL(string: UIApplicationOpenSettingsURLString) {
+                        UIApplication.sharedApplication().openURL(url)
+                    }
+                    })
+                dispatch_async(dispatch_get_main_queue()) {
+                    self.presentViewController(alertController, animated: true, completion: nil)
+                }
+            }
+        } else {
+            // Fallback on earlier versions
+        }
+
+        
     }
 
     override func didReceiveMemoryWarning() {
@@ -97,13 +129,7 @@ class RiderViewController: UIViewController, CLLocationManagerDelegate, MKMapVie
     
     // MARK: - CLLocation
     
-    func locationManager(manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        self.mapView.removeAnnotations(self.mapView.annotations)
-        
-        let location: CLLocationCoordinate2D = (manager.location?.coordinate)!
-        self.latitude = location.latitude
-        self.longitude = location.longitude
-        
+    func configureMap(location: CLLocationCoordinate2D) -> MKPointAnnotation {
         let center = CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)
         let region = MKCoordinateRegion(center: center, span: MKCoordinateSpanMake(0.01, 0.01))
         self.mapView.setRegion(region, animated: true)
@@ -111,7 +137,53 @@ class RiderViewController: UIViewController, CLLocationManagerDelegate, MKMapVie
         let pinLocation: CLLocationCoordinate2D = CLLocationCoordinate2DMake(location.latitude, location.longitude)
         let objectAnnotation = MKPointAnnotation()
         objectAnnotation.coordinate = pinLocation
-        self.mapView.addAnnotation(objectAnnotation)
+        return objectAnnotation
+    }
+    
+    func locationManager(manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        self.mapView.removeAnnotations(self.mapView.annotations)
+        
+        let location: CLLocationCoordinate2D = (manager.location?.coordinate)!
+        self.latitude = location.latitude
+        self.longitude = location.longitude
+        
+        let query = PFQuery(className: "RiderRequest")
+        query.whereKey("username", equalTo: PFUser.currentUser()!.username!)
+        query.findObjectsInBackgroundWithBlock { (objects: [PFObject]?, error: NSError?) -> Void in
+            if error != nil {
+                print("error finding RiderRequest \(error?.localizedDescription)")
+            } else {
+//                objects?.forEach(dispatch_async(dispatch_get_main_queue()) {
+//                    self.callButtonTapped.setTitle("Driver is ", forState: .Normal)
+//                    })
+                for object in objects! {
+                    if let driverUsername = object["driverResponded"] {
+                        dispatch_async(dispatch_get_main_queue()) {
+                            self.callButtonTapped.setTitle("Driver \(driverUsername), is on the way", forState: .Normal)
+                        }
+                        let query = PFQuery(className: "DriverLocation")
+                        query.whereKey("username", equalTo: driverUsername)
+                        query.findObjectsInBackgroundWithBlock() { (objects: [PFObject]?, error: NSError?) -> Void in
+                            if error == nil {
+                                for object in objects! {
+                                    if let driverLocation = object["driverLocation"] as? PFGeoPoint {
+                                        print("driverLocation \(driverLocation)")
+                                        let distance = (CLLocation(latitude: self.latitude, longitude: self.longitude)).distanceFromLocation(CLLocation(latitude: driverLocation.latitude, longitude: driverLocation.longitude))
+                                        let distanceString = String.localizedStringWithFormat(".2f %@", Double(distance), "km away")
+                                        dispatch_async(dispatch_get_main_queue()) {
+                                            self.callButtonTapped.setTitle("Driver \(driverUsername), is \(distanceString)", forState: .Normal)
+                                        }
+                                    }
+                                }
+                            } else {
+                                print("Error finding DriverLocation w/ username \(error!.localizedDescription)")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.mapView.addAnnotation(self.configureMap(location))
     }
     
     func locationManager(manager: CLLocationManager, didFailWithError error: NSError) {
